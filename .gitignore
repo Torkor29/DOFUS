@@ -1,0 +1,92 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Dofus Bot specific
+*.pt
+*.pth
+*.onnx
+runs/
+debug_*/
+*.cache
+
+# Datasets (gros fichiers)
+dataset/images/
+player_dataset/images/Personnage/*.jpg
+player_dataset/images/Personnage/*.png
+player_dataset/images/Personnage/*.jpeg
+player_dataset/train/images/
+player_dataset/train/labels/
+player_dataset/validation/images/
+player_dataset/validation/labels/
+Modèle poissons/train/
+Modèle poissons/validation/
+
+# Fichiers de configuration locaux (peuvent contenir des infos sensibles)
+bot_settings.json
+circuits.json
+screen_profiles.json
+manual_moves.json
+manual_fishing.json
+manual_combat.json
+circuit_state.json
+
+# Build
+build/
+dist/
+*.spec
+
+# Logs
+*.log
+
+# Screenshots de debug
+debug_combat/
+debug_fish/
+debug_ocr/
+debug_templates/
+
+# Fichiers temporaires
+*.tmp
+*.temp
+__dummy__
+
+# Fichiers de sauvegarde
+*.bak
+*.backup
+

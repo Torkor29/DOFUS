@@ -1,0 +1,14 @@
+{
+    "Personnage": {
+        "class_id": 0,
+        "class_name": "personnage",
+        "folder": "Personnage",
+        "description": "Détection du personnage joueur"
+    },
+    "Mobs": {
+        "class_id": 1,
+        "class_name": "mobs",
+        "folder": "Mobs",
+        "description": "Détection des ennemis/mobs en combat"
+    }
+}

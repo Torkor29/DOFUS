@@ -12,9 +12,9 @@ class Combat:
         self.in_combat = False
         self.last_known_player_pos = None
         self.player_model = None
+        self.mobs_model = None
         self._load_player_model()
-        self.player_model = None
-        self._load_player_model()
+        self._load_mobs_model()
 
     def check_combat_start(self, debug=False):
         """
@@ -54,6 +54,8 @@ class Combat:
             time.sleep(1.0)
             print("⏳ Attente démarrage combat (3s)...")
             time.sleep(3.0)
+            print("⏳ Attente supplémentaire pour laisser le mob jouer en premier (5s)...")
+            time.sleep(5.0)
             self.in_combat = True
             return True
         
@@ -177,6 +179,30 @@ class Combat:
             print(f"⚠️  Impossible de charger le modèle YOLO personnage : {e}")
             self.player_model = None
 
+    def _load_mobs_model(self):
+        """Charge le modèle YOLO pour la détection des mobs si disponible."""
+        try:
+            from ultralytics import YOLO
+            mobs_model_path = os.path.abspath("runs/mobs/train/weights/best.pt")
+            if os.path.exists(mobs_model_path):
+                self.mobs_model = YOLO(mobs_model_path)
+                print("✅ Modèle IA (Mobs) chargé avec succès.")
+            else:
+                # Chercher dans les sous-dossiers
+                possible_paths = []
+                if os.path.exists("runs/mobs"):
+                    for root, dirs, files in os.walk("runs/mobs"):
+                        if "best.pt" in files:
+                            possible_paths.append(os.path.join(root, "best.pt"))
+                if possible_paths:
+                    self.mobs_model = YOLO(possible_paths[-1])
+                    print(f"✅ Modèle IA (Mobs) chargé : {possible_paths[-1]}")
+                else:
+                    print("ℹ️  Modèle YOLO mobs non trouvé. Utilisation de la détection par couleur (cercles bleus).")
+        except Exception as e:
+            print(f"⚠️  Impossible de charger le modèle YOLO mobs : {e}")
+            self.mobs_model = None
+
     def _get_player_position(self):
         """
         Trouve le personnage. Stratégie multi-niveaux :
@@ -192,7 +218,9 @@ class Combat:
             try:
                 screenshot = pyautogui.screenshot()
                 img_np = np.array(screenshot)
-                results = self.player_model(img_np, conf=0.25, verbose=False)
+                # Seuil de confiance augmenté à 0.35 pour plus de précision (moins de faux positifs)
+                # Vous pouvez ajuster entre 0.2 (plus de détections) et 0.5 (plus strict)
+                results = self.player_model(img_np, conf=0.35, verbose=False)
                 
                 for r in results:
                     boxes = r.boxes
@@ -614,24 +642,101 @@ class Combat:
         case_size = self._get_case_size()
         print(f"   📏 Taille case utilisée : {case_size}px")
         
-        move_dist = min(dist, case_size)
-        step_x = int((dx / dist) * move_dist)
-        step_y = int((dy / dist) * move_dist)
+        # AMÉLIORATION : Calculer la case de destination sur la grille
+        # Au lieu de cliquer sur un point arbitraire, on calcule quelle case
+        # est la meilleure pour se rapprocher de l'ennemi
+        
+        # Direction normalisée vers l'ennemi
+        if dist > 0:
+            dir_x = dx / dist
+            dir_y = dy / dist
+        else:
+            return False
+        
+        # Calculer le nombre de cases à parcourir (max 1 case à la fois)
+        # On veut se déplacer d'exactement 1 case vers l'ennemi
+        move_dist = case_size
+        
+        # Calculer le point de destination en pixels
+        step_x = int(dir_x * move_dist)
+        step_y = int(dir_y * move_dist)
         dest_x = px + step_x
         dest_y = py + step_y
         
-        print(f"🏃 Déplacement : {move_dist}px vers ({dest_x}, {dest_y})")
+        # AMÉLIORATION : Aligner le point sur la grille de combat
+        # Les cases de combat sont alignées sur une grille, on doit cliquer
+        # sur le centre d'une case, pas n'importe où
+        
+        # Calculer la position relative du personnage dans sa case
+        # On suppose que le personnage est au centre de sa case
+        # On aligne la destination sur la grille en arrondissant au multiple de case_size le plus proche
+        # Mais on part du centre de la case du personnage
+        
+        # Position de la case du personnage (arrondie)
+        player_case_x = (px // case_size) * case_size + case_size // 2
+        player_case_y = (py // case_size) * case_size + case_size // 2
+        
+        # Calculer la case de destination (1 case dans la direction de l'ennemi)
+        dest_case_x = player_case_x + step_x
+        dest_case_y = player_case_y + step_y
+        
+        # Aligner sur le centre de la case de destination
+        dest_case_center_x = (dest_case_x // case_size) * case_size + case_size // 2
+        dest_case_center_y = (dest_case_y // case_size) * case_size + case_size // 2
+        
+        # Utiliser le centre de la case comme point de clic
+        final_dest_x = dest_case_center_x
+        final_dest_y = dest_case_center_y
+        
+        print(f"🏃 Déplacement calculé :")
+        print(f"   - Case personnage : ({player_case_x}, {player_case_y})")
+        print(f"   - Case destination : ({final_dest_x}, {final_dest_y})")
+        print(f"   - Distance : {move_dist}px (1 case)")
         
         # DEBUG : Screenshot du point de destination
-        self._save_debug_move_destination(player_pos, (dest_x, dest_y), closest)
+        self._save_debug_move_destination(player_pos, (final_dest_x, final_dest_y), closest)
         
-        pyautogui.moveTo(dest_x, dest_y)
+        pyautogui.moveTo(final_dest_x, final_dest_y)
         time.sleep(0.2)
         pyautogui.click()
-        print("✅ Clic déplacement effectué.")
+        print("✅ Clic déplacement effectué sur le centre de la case.")
         return True
 
     def _find_enemy_blue_circles(self):
+        """
+        Trouve les ennemis. Stratégie multi-niveaux :
+        1. YOLO Mobs (priorité si disponible)
+        2. Détection par couleur (cercles bleus - fallback)
+        """
+        # 1. YOLO Mobs (Priorité si disponible)
+        if self.mobs_model:
+            try:
+                screen_w, screen_h = pyautogui.size()
+                search_w = screen_w - 200
+                search_h = screen_h - 180
+                region = (0, 0, search_w, search_h)
+                
+                screenshot = pyautogui.screenshot(region=region)
+                img_np = np.array(screenshot)
+                results = self.mobs_model(img_np, conf=0.35, verbose=False)
+                
+                enemies = []
+                for r in results:
+                    boxes = r.boxes
+                    for box in boxes:
+                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                        center_x = int((x1 + x2) / 2) + region[0]
+                        center_y = int((y1 + y2) / 2) + region[1]
+                        confidence = float(box.conf[0].cpu().numpy())
+                        enemies.append((center_x, center_y))
+                        print(f"   ✅ YOLO Mobs : Ennemi détecté en ({center_x}, {center_y}) avec confiance {confidence:.2f}")
+                
+                if enemies:
+                    return enemies
+            except Exception as e:
+                print(f"   ⚠️ Erreur détection YOLO Mobs : {e}")
+        
+        # 2. Fallback : Détection par couleur (cercles bleus)
         screen_w, screen_h = pyautogui.size()
         search_w = screen_w - 200
         search_h = screen_h - 180
@@ -654,5 +759,7 @@ class Combat:
                         cx = int(M["m10"] / M["m00"]) + region[0]
                         cy = int(M["m01"] / M["m00"]) + region[1]
                         enemies.append((cx, cy))
+            if enemies:
+                print(f"   🔵 Détection couleur : {len(enemies)} ennemi(s) trouvé(s)")
             return enemies
         except: return []

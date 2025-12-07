@@ -1,0 +1,6 @@
+names:
+  0: personnage
+  1: mobs
+path: C:/Users/Julie/OneDrive/Documents/DOFUS - DEPLACEMENT PECHE OK/player_dataset
+train: train/images
+val: validation/images

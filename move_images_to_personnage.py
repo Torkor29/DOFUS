@@ -57,3 +57,8 @@ def move_images_to_personnage():
 if __name__ == "__main__":
     move_images_to_personnage()
 
+
+
+
+
+

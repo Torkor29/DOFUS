@@ -73,6 +73,21 @@ class DofusBotApp(ctk.CTk):
         })
         self.circuits = self.load_json(CIRCUITS_FILE, default={})
         self.screen_profiles = self.load_json(SCREEN_PROFILES_FILE, default={})
+        self.templates = self.load_json("templates_config.json", default={
+            "Personnage": {
+                "class_id": 0,
+                "class_name": "personnage",
+                "folder": "Personnage",
+                "description": "Détection du personnage joueur"
+            },
+            "Mobs": {
+                "class_id": 1,
+                "class_name": "mobs",
+                "folder": "Mobs",
+                "description": "Détection des ennemis/mobs en combat"
+            }
+        })
+        self.current_template = ctk.StringVar(value="Personnage")
 
         # --- LAYOUT PRINCIPAL ---
         self.grid_columnconfigure(1, weight=1)
@@ -81,7 +96,7 @@ class DofusBotApp(ctk.CTk):
         # 1. Sidebar (Menu)
         self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_rowconfigure(9, weight=1)
+        self.sidebar.grid_rowconfigure(10, weight=1)
 
         self.logo_label = ctk.CTkLabel(self.sidebar, text="DOFUS AI\nMANAGER", font=ctk.CTkFont(size=22, weight="bold"))
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
@@ -92,8 +107,8 @@ class DofusBotApp(ctk.CTk):
         self.create_sidebar_button("Profils d'écran", "screens", 3)
         self.create_sidebar_button("Calibrage Manuel", "calib", 4)
         self.create_sidebar_button("Données & Map", "manage", 5)
-        self.create_sidebar_button("Template Perso", "player_template", 6)
-        self.create_sidebar_button("Annoter Personnage", "annotate", 7)
+        self.create_sidebar_button("Templates IA", "templates", 6)
+        self.create_sidebar_button("Annoter", "annotate", 7)
         self.create_sidebar_button("Entraînement IA", "train", 8)
 
         # 2. Main Content Area
@@ -107,12 +122,16 @@ class DofusBotApp(ctk.CTk):
         self.create_screens_view()
         self.create_calib_view()
         self.create_manage_view()
-        self.create_player_template_view()
+        self.create_templates_view()
         self.create_annotate_view()
         self.create_train_view()
         
         # Variables pour la collecte de données personnage
         self.player_collector = collect_player_data.PlayerDataCollector()
+        
+        # Sauvegarder la config des templates si elle n'existe pas
+        if not os.path.exists("templates_config.json"):
+            self.save_json("templates_config.json", self.templates)
 
         self.show_frame("dashboard")
 
@@ -1066,7 +1085,342 @@ class DofusBotApp(ctk.CTk):
             self.refresh_manage_view()
 
     # ----------------------------------------------------------------
-    # 5. TEMPLATE PERSONNAGE
+    # 5. TEMPLATES IA (Générique)
+    # ----------------------------------------------------------------
+    def create_templates_view(self):
+        """Crée la vue de gestion des templates IA (Personnage, Mobs, etc.)"""
+        frame = ctk.CTkFrame(self.main_frame)
+        self.frames["templates"] = frame
+        
+        # Header
+        header = ctk.CTkFrame(frame, fg_color="transparent")
+        header.pack(fill="x", padx=20, pady=20)
+        ctk.CTkLabel(header, text="🎯 Gestion des Templates IA", 
+                    font=ctk.CTkFont(size=24, weight="bold")).pack()
+        
+        # Sélection du template actif
+        select_frame = ctk.CTkFrame(frame)
+        select_frame.pack(fill="x", padx=20, pady=10)
+        
+        ctk.CTkLabel(select_frame, text="Template actif :", 
+                    font=ctk.CTkFont(size=14, weight="bold")).pack(side="left", padx=10)
+        
+        template_names = list(self.templates.keys())
+        self.combo_template = ctk.CTkComboBox(select_frame, 
+                                             values=template_names,
+                                             variable=self.current_template,
+                                             width=200,
+                                             command=self.on_template_change)
+        self.combo_template.pack(side="left", padx=10)
+        self.combo_template.set(self.current_template.get())
+        
+        # Boutons de gestion
+        btn_frame = ctk.CTkFrame(select_frame, fg_color="transparent")
+        btn_frame.pack(side="left", padx=20)
+        
+        ctk.CTkButton(btn_frame, text="➕ Nouveau", width=100,
+                     command=self.create_new_template).pack(side="left", padx=5)
+        ctk.CTkButton(btn_frame, text="✏️ Modifier", width=100,
+                     command=self.edit_template).pack(side="left", padx=5)
+        ctk.CTkButton(btn_frame, text="🗑️ Supprimer", width=100, fg_color="red",
+                     command=self.delete_template).pack(side="left", padx=5)
+        
+        # Info du template sélectionné
+        self.template_info_frame = ctk.CTkFrame(frame)
+        self.template_info_frame.pack(fill="x", padx=20, pady=10)
+        self.refresh_template_info()
+        
+        # Actions pour le template sélectionné
+        actions_frame = ctk.CTkFrame(frame)
+        actions_frame.pack(fill="x", padx=20, pady=20)
+        
+        ctk.CTkLabel(actions_frame, text="Actions pour ce template :", 
+                    font=ctk.CTkFont(size=14, weight="bold")).pack(pady=10)
+        
+        # Collecte
+        collect_frame = ctk.CTkFrame(actions_frame)
+        collect_frame.pack(fill="x", padx=10, pady=5)
+        
+        self.btn_start_collect = ctk.CTkButton(collect_frame, 
+            text="▶ Démarrer Collecte (2 min)", 
+            height=50, 
+            fg_color="#2CC985", 
+            hover_color="#229966",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self.start_template_collection)
+        self.btn_start_collect.pack(side="left", padx=5, expand=True, fill="x")
+        
+        self.btn_stop_collect = ctk.CTkButton(collect_frame, 
+            text="⏹ Arrêter", 
+            height=50, 
+            fg_color="#FF4D4D", 
+            hover_color="#CC0000",
+            state="disabled",
+            command=self.stop_template_collection)
+        self.btn_stop_collect.pack(side="left", padx=5)
+        
+        # Statut collecte
+        self.lbl_collect_status = ctk.CTkLabel(actions_frame, 
+            text="Prêt à collecter", 
+            font=ctk.CTkFont(size=12))
+        self.lbl_collect_status.pack(pady=5)
+        
+        # Progression
+        self.progress_collect = ctk.CTkProgressBar(actions_frame)
+        self.progress_collect.pack(fill="x", padx=20, pady=10)
+        self.progress_collect.set(0)
+        
+        # Autres actions
+        other_actions = ctk.CTkFrame(actions_frame, fg_color="transparent")
+        other_actions.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkButton(other_actions, 
+            text="📦 Déplacer Images", 
+            height=40, 
+            fg_color="#E67E22", 
+            hover_color="#D35400",
+            command=self.move_template_images).pack(side="left", padx=5, expand=True, fill="x")
+        
+        ctk.CTkButton(other_actions, 
+            text="✏️ Annoter", 
+            height=40, 
+            fg_color="#9B59B6", 
+            hover_color="#7D3C98",
+            command=lambda: self.show_frame("annotate")).pack(side="left", padx=5, expand=True, fill="x")
+        
+        ctk.CTkButton(other_actions, 
+            text="📦 Préparer Dataset", 
+            height=40, 
+            fg_color="#3B8ED0", 
+            hover_color="#1F6AA5",
+            command=self.prepare_template_dataset).pack(side="left", padx=5, expand=True, fill="x")
+        
+        ctk.CTkButton(other_actions, 
+            text="🚀 Entraîner", 
+            height=40, 
+            fg_color="#D97706", 
+            hover_color="#B45309",
+            command=self.train_template_model).pack(side="left", padx=5, expand=True, fill="x")
+    
+    def refresh_template_info(self):
+        """Met à jour l'affichage des infos du template sélectionné."""
+        for widget in self.template_info_frame.winfo_children():
+            widget.destroy()
+        
+        template_name = self.current_template.get()
+        if template_name in self.templates:
+            template = self.templates[template_name]
+            info_text = f"""
+📁 Dossier : player_dataset/images/{template['folder']}/
+🏷️  Class ID : {template['class_id']}
+📝 Nom classe : {template['class_name']}
+ℹ️  Description : {template.get('description', 'Aucune')}
+            """
+            ctk.CTkLabel(self.template_info_frame, text=info_text.strip(), 
+                        justify="left", font=ctk.CTkFont(size=11)).pack(padx=20, pady=10)
+    
+    def on_template_change(self, choice):
+        """Quand on change de template."""
+        self.current_template.set(choice)
+        self.refresh_template_info()
+    
+    def create_new_template(self):
+        """Crée un nouveau template."""
+        dialog = ctk.CTkInputDialog(text="Nom du nouveau template :", title="Nouveau Template")
+        name = dialog.get_input()
+        if not name or name in self.templates:
+            if name in self.templates:
+                messagebox.showerror("Erreur", "Un template avec ce nom existe déjà.")
+            return
+        
+        # Dialog pour les détails
+        class_id = len(self.templates)  # ID automatique
+        folder = name  # Dossier = nom du template
+        
+        self.templates[name] = {
+            "class_id": class_id,
+            "class_name": name.lower(),
+            "folder": folder,
+            "description": f"Détection de {name}"
+        }
+        
+        self.save_json("templates_config.json", self.templates)
+        self.combo_template.configure(values=list(self.templates.keys()))
+        self.combo_template.set(name)
+        self.current_template.set(name)
+        self.refresh_template_info()
+        messagebox.showinfo("Succès", f"Template '{name}' créé !")
+    
+    def edit_template(self):
+        """Modifie un template existant."""
+        template_name = self.current_template.get()
+        if template_name not in self.templates:
+            return
+        
+        # Pour l'instant, on peut juste modifier la description
+        dialog = ctk.CTkInputDialog(
+            text=f"Description pour '{template_name}' :", 
+            title="Modifier Template"
+        )
+        desc = dialog.get_input()
+        if desc:
+            self.templates[template_name]["description"] = desc
+            self.save_json("templates_config.json", self.templates)
+            self.refresh_template_info()
+    
+    def delete_template(self):
+        """Supprime un template."""
+        template_name = self.current_template.get()
+        if template_name not in self.templates:
+            return
+        
+        if len(self.templates) <= 1:
+            messagebox.showerror("Erreur", "Impossible de supprimer le dernier template.")
+            return
+        
+        if messagebox.askyesno("Confirmer", f"Supprimer le template '{template_name}' ?"):
+            del self.templates[template_name]
+            self.save_json("templates_config.json", self.templates)
+            template_names = list(self.templates.keys())
+            self.combo_template.configure(values=template_names)
+            self.combo_template.set(template_names[0])
+            self.current_template.set(template_names[0])
+            self.refresh_template_info()
+    
+    def start_template_collection(self):
+        """Démarre la collecte pour le template actif."""
+        template_name = self.current_template.get()
+        if template_name not in self.templates:
+            return
+        
+        template = self.templates[template_name]
+        save_dir = os.path.join("player_dataset", "images", template["folder"])
+        
+        if self.player_collector.is_collecting:
+            return
+        
+        self.btn_start_collect.configure(state="disabled")
+        self.btn_stop_collect.configure(state="normal")
+        self.progress_collect.set(0)
+        
+        def update_status(message, count, total):
+            self.lbl_collect_status.configure(text=message)
+            if total > 0:
+                self.progress_collect.set(count / total)
+        
+        def collection_thread():
+            try:
+                self.player_collector.collect_images_only(
+                    duration_seconds=120,
+                    interval=2.0,
+                    save_dir=save_dir,
+                    callback=update_status
+                )
+            finally:
+                self.btn_start_collect.configure(state="normal")
+                self.btn_stop_collect.configure(state="disabled")
+                self.progress_collect.set(1.0)
+        
+        threading.Thread(target=collection_thread, daemon=True).start()
+    
+    def stop_template_collection(self):
+        """Arrête la collecte."""
+        self.player_collector.stop_collection()
+        self.btn_start_collect.configure(state="normal")
+        self.btn_stop_collect.configure(state="disabled")
+        self.lbl_collect_status.configure(text="Collecte arrêtée")
+    
+    def move_template_images(self):
+        """Déplace les images collectées vers le dossier du template."""
+        template_name = self.current_template.get()
+        if template_name not in self.templates:
+            return
+        
+        template = self.templates[template_name]
+        source_dir = "player_dataset/images"
+        dest_dir = os.path.join("player_dataset", "images", template["folder"])
+        
+        if not os.path.exists(source_dir):
+            messagebox.showerror("Erreur", f"Dossier source non trouvé : {source_dir}")
+            return
+        
+        if not os.path.exists(dest_dir):
+            os.makedirs(dest_dir)
+        
+        extensions = ['.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG']
+        image_files = [f for f in os.listdir(source_dir) 
+                      if any(f.lower().endswith(ext) for ext in extensions) 
+                      and '_annotated' not in f]
+        
+        if not image_files:
+            messagebox.showinfo("Info", "Aucune image à déplacer.")
+            return
+        
+        moved = 0
+        for img_file in image_files:
+            src_path = os.path.join(source_dir, img_file)
+            dst_path = os.path.join(dest_dir, img_file)
+            if not os.path.exists(dst_path):
+                import shutil
+                shutil.move(src_path, dst_path)
+                moved += 1
+        
+        messagebox.showinfo("Succès", f"{moved} image(s) déplacée(s) vers {template['folder']}/")
+    
+    def prepare_template_dataset(self):
+        """Prépare le dataset pour le template actif."""
+        template_name = self.current_template.get()
+        if template_name not in self.templates:
+            return
+        
+        template = self.templates[template_name]
+        source_dir = os.path.join("player_dataset", "images", template["folder"])
+        
+        if not os.path.exists(source_dir):
+            messagebox.showerror("Erreur", f"Dossier non trouvé : {source_dir}")
+            return
+        
+        txt_files = [f for f in os.listdir(source_dir) if f.endswith('.txt')]
+        if not txt_files:
+            messagebox.showerror("Erreur", f"Aucune annotation trouvée dans {source_dir}")
+            return
+        
+        if messagebox.askyesno("Confirmation", 
+            f"Préparer le dataset pour '{template_name}' ?\n\n"
+            f"📁 {len(txt_files)} annotation(s) trouvée(s)\n"
+            f"📦 Les images seront copiées vers train/ et validation/"):
+            try:
+                # Utiliser la fonction générique de préparation
+                from prepare_template_dataset import prepare_template_dataset
+                prepare_template_dataset(template_name, self.templates)
+                messagebox.showinfo("Succès", "Dataset préparé avec succès !")
+            except Exception as e:
+                import traceback
+                messagebox.showerror("Erreur", f"Erreur : {e}\n\n{traceback.format_exc()}")
+    
+    def train_template_model(self):
+        """Lance l'entraînement pour le template actif."""
+        template_name = self.current_template.get()
+        if template_name not in self.templates:
+            return
+        
+        if messagebox.askyesno("Attention", 
+            f"Lancer l'entraînement pour '{template_name}' ?\n\n"
+            "Cela peut prendre du temps."):
+            threading.Thread(
+                target=self._train_template_thread, 
+                args=(template_name,), 
+                daemon=True
+            ).start()
+            messagebox.showinfo("Info", "Entraînement lancé en arrière-plan.")
+    
+    def _train_template_thread(self, template_name):
+        """Thread d'entraînement."""
+        from train_template import train_template_model
+        train_template_model(template_name, self.templates)
+
+    # ----------------------------------------------------------------
+    # 5bis. ANCIEN TEMPLATE PERSONNAGE (déprécié, gardé pour compatibilité)
     # ----------------------------------------------------------------
     def create_player_template_view(self):
         frame = ctk.CTkFrame(self.main_frame)
@@ -1314,6 +1668,25 @@ class DofusBotApp(ctk.CTk):
     # ----------------------------------------------------------------
     # 6. ANNOTATEUR PERSONNAGE
     # ----------------------------------------------------------------
+    def _update_annotate_directories(self):
+        """Met à jour les dossiers selon le template actif."""
+        template_name = self.current_template.get()
+        if template_name in self.templates:
+            template = self.templates[template_name]
+            folder = template["folder"]
+            base_dir = os.path.abspath("player_dataset/images")
+            self.annotate_image_dir = os.path.join(base_dir, folder)
+            self.annotate_annotated_dir = os.path.join(base_dir, folder)
+            self.annotate_current_class_id = template["class_id"]
+    
+    def annotate_on_class_change(self, choice):
+        """Quand on change de classe dans l'annotateur."""
+        if choice in self.templates:
+            self.current_template.set(choice)
+            self._update_annotate_directories()
+            # Recharger les images du nouveau dossier
+            self.annotate_load_images()
+    
     def create_annotate_view(self):
         """Crée la vue intégrée pour l'annotateur de personnage."""
         frame = ctk.CTkFrame(self.main_frame)
@@ -1322,7 +1695,7 @@ class DofusBotApp(ctk.CTk):
         # Header
         header = ctk.CTkFrame(frame, fg_color="transparent")
         header.pack(fill="x", padx=20, pady=10)
-        ctk.CTkLabel(header, text="✏️ Annotateur Personnage YOLO", 
+        ctk.CTkLabel(header, text="✏️ Annotateur YOLO Multi-Classes", 
                     font=ctk.CTkFont(size=24, weight="bold")).pack(side="left")
         
         # Container principal avec layout horizontal
@@ -1348,6 +1721,22 @@ class DofusBotApp(ctk.CTk):
         control_frame = ctk.CTkFrame(main_container, width=300)
         control_frame.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
         control_frame.grid_propagate(False)
+        
+        # Sélecteur de classe/template (AVANT les instructions)
+        class_frame = ctk.CTkFrame(control_frame)
+        class_frame.pack(pady=(10, 5))
+        
+        ctk.CTkLabel(class_frame, text="Classe à annoter :", 
+                    font=ctk.CTkFont(size=12, weight="bold")).pack(pady=(5, 2))
+        
+        template_names = list(self.templates.keys())
+        self.annotate_class_combo = ctk.CTkComboBox(class_frame, 
+                                                   values=template_names,
+                                                   width=200,
+                                                   command=self.annotate_on_class_change)
+        self.annotate_class_combo.pack(pady=5)
+        self.annotate_class_combo.set(self.current_template.get())
+        # Note: annotate_on_class_change sera appelé après la création de tous les widgets
         
         # Instructions
         ctk.CTkLabel(control_frame, text="Instructions:", 
@@ -1410,8 +1799,10 @@ class DofusBotApp(ctk.CTk):
         self.annotate_bbox_label.pack(pady=10)
         
         # Variables pour l'annotateur
-        self.annotate_image_dir = os.path.abspath("player_dataset/images/Personnage")
-        self.annotate_annotated_dir = os.path.abspath("player_dataset/images/Personnage")
+        self.annotate_current_class_id = 0  # Class ID actuel (0=Personnage, 1=Mobs, etc.)
+        self.annotate_image_dir = None
+        self.annotate_annotated_dir = None
+        self._update_annotate_directories()  # Initialiser les dossiers selon le template actif
         self.annotate_image_files = []
         self.annotate_current_index = 0
         self.annotate_current_image_path = None
@@ -1419,8 +1810,11 @@ class DofusBotApp(ctk.CTk):
         self.annotate_scale = 1.0
         self.annotate_start_x = None
         self.annotate_start_y = None
-        self.annotate_bbox = None
+        self.annotate_bboxes = []  # Liste de toutes les bboxes : [(x1, y1, x2, y2, class_id), ...]
+        self.annotate_selected_bbox_index = -1  # Index de la bbox sélectionnée (-1 = aucune)
         self.annotate_drawing = False
+        self.annotate_dragging_bbox = False  # True si on déplace une bbox existante
+        self.annotate_bbox_is_new = False  # Flag pour savoir si des bboxes sont nouvelles (non sauvegardées)
         
         # Bind events sur le canvas
         self.annotate_canvas.bind("<Button-1>", self.annotate_on_click)
@@ -1432,8 +1826,8 @@ class DofusBotApp(ctk.CTk):
         self.bind("<Right>", lambda e: self.annotate_next_image())
         self.bind("<Return>", lambda e: self.annotate_save())
         
-        # Charger les images
-        self.annotate_load_images()
+        # Initialiser et charger les images (après création de tous les widgets)
+        self.annotate_on_class_change(self.current_template.get())
     
     def annotate_load_images(self):
         """Charge la liste des images à annoter."""
@@ -1500,6 +1894,12 @@ class DofusBotApp(ctk.CTk):
         # Garder la référence
         self.annotate_current_photo = photo_image
         
+        # Réinitialiser les bboxes avant de charger une nouvelle image
+        self.annotate_bboxes = []
+        self.annotate_selected_bbox_index = -1
+        self.annotate_drawing = False
+        self.annotate_dragging_bbox = False
+        
         # Nettoyer le Canvas
         self.annotate_canvas.delete("all")
         
@@ -1528,23 +1928,27 @@ class DofusBotApp(ctk.CTk):
         self.annotate_update_status()
     
     def annotate_load_existing_annotation(self):
-        """Charge une annotation existante si elle existe."""
+        """Charge toutes les annotations existantes pour cette image."""
         base_name = os.path.splitext(os.path.basename(self.annotate_current_image_path))[0]
         txt_path = os.path.join(self.annotate_annotated_dir, f"{base_name}.txt")
         if not os.path.exists(txt_path):
             txt_path = os.path.join(self.annotate_image_dir, f"{base_name}.txt")
         
+        self.annotate_bboxes = []
+        
         if os.path.exists(txt_path):
+            h, w = self.annotate_current_image.shape[:2]
+            display_w = int(w * self.annotate_scale)
+            display_h = int(h * self.annotate_scale)
+            
             with open(txt_path, 'r') as f:
-                line = f.readline().strip()
-                if line:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
                     parts = line.split()
                     if len(parts) == 5:
-                        _, x_center, y_center, width, height = map(float, parts)
-                        
-                        h, w = self.annotate_current_image.shape[:2]
-                        display_w = int(w * self.annotate_scale)
-                        display_h = int(h * self.annotate_scale)
+                        class_id, x_center, y_center, width, height = map(float, parts)
                         
                         if self.annotate_canvas_id:
                             bbox = self.annotate_canvas.bbox(self.annotate_canvas_id)
@@ -1563,67 +1967,143 @@ class DofusBotApp(ctk.CTk):
                                 x2 = int(x_center_px + width_px / 2)
                                 y2 = int(y_center_px + height_px / 2)
                                 
-                                self.annotate_canvas.create_rectangle(x1, y1, x2, y2, outline="green", width=2, tags="bbox")
-                                self.annotate_bbox = (x1, y1, x2, y2)
-                                self.annotate_update_bbox_label()
+                                # Stocker avec le class_id
+                                self.annotate_bboxes.append((x1, y1, x2, y2, int(class_id)))
+        
+        self.annotate_bbox_is_new = False  # Bboxes chargées depuis fichier = déjà sauvegardées
+        self.annotate_selected_bbox_index = -1
+        self.annotate_draw_all_bboxes()
+        self.annotate_update_bbox_label()
+    
+    def annotate_find_bbox_at(self, x, y):
+        """Trouve l'index de la bbox contenant le point (x, y). Retourne -1 si aucune."""
+        for i, (x1, y1, x2, y2, _) in enumerate(self.annotate_bboxes):
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return i
+        return -1
     
     def annotate_on_click(self, event):
-        """Début du dessin de la bbox."""
-        self.annotate_start_x = self.annotate_canvas.canvasx(event.x)
-        self.annotate_start_y = self.annotate_canvas.canvasy(event.y)
-        self.annotate_drawing = True
-        self.annotate_bbox = None
-        self.annotate_canvas.delete("bbox")
+        """Gère le clic : sélection d'une bbox existante ou début d'un nouveau dessin."""
+        click_x = self.annotate_canvas.canvasx(event.x)
+        click_y = self.annotate_canvas.canvasy(event.y)
+        
+        # Chercher si on clique sur une bbox existante
+        bbox_idx = self.annotate_find_bbox_at(click_x, click_y)
+        
+        if bbox_idx >= 0:
+            # On clique sur une bbox existante : la sélectionner pour déplacement
+            self.annotate_selected_bbox_index = bbox_idx
+            self.annotate_dragging_bbox = True
+            x1, y1, x2, y2, _ = self.annotate_bboxes[bbox_idx]
+            # Calculer l'offset du clic par rapport au coin supérieur gauche
+            self.annotate_start_x = click_x - x1
+            self.annotate_start_y = click_y - y1
+            self.annotate_drawing = False
+        else:
+            # Nouveau dessin
+            self.annotate_start_x = click_x
+            self.annotate_start_y = click_y
+            self.annotate_drawing = True
+            self.annotate_dragging_bbox = False
+            self.annotate_selected_bbox_index = -1
+        
+        self.annotate_draw_all_bboxes()
     
     def annotate_on_drag(self, event):
-        """Pendant le dessin de la bbox."""
-        if not self.annotate_drawing:
-            return
-        
+        """Pendant le dessin ou le déplacement d'une bbox."""
         current_x = self.annotate_canvas.canvasx(event.x)
         current_y = self.annotate_canvas.canvasy(event.y)
         
-        self.annotate_canvas.delete("bbox")
-        self.annotate_canvas.create_rectangle(
-            self.annotate_start_x, self.annotate_start_y, current_x, current_y,
-            outline="yellow", width=2, tags="bbox"
-        )
+        if self.annotate_dragging_bbox and self.annotate_selected_bbox_index >= 0:
+            # Déplacer la bbox sélectionnée
+            x1, y1, x2, y2, class_id = self.annotate_bboxes[self.annotate_selected_bbox_index]
+            width = x2 - x1
+            height = y2 - y1
+            
+            # Nouvelle position basée sur l'offset
+            new_x1 = current_x - self.annotate_start_x
+            new_y1 = current_y - self.annotate_start_y
+            new_x2 = new_x1 + width
+            new_y2 = new_y1 + height
+            
+            # Mettre à jour la bbox
+            self.annotate_bboxes[self.annotate_selected_bbox_index] = (int(new_x1), int(new_y1), int(new_x2), int(new_y2), class_id)
+            self.annotate_bbox_is_new = True
+            self.annotate_draw_all_bboxes()
+        elif self.annotate_drawing:
+            # Dessiner une nouvelle bbox
+            self.annotate_canvas.delete("bbox_temp")
+            x1 = min(self.annotate_start_x, current_x)
+            y1 = min(self.annotate_start_y, current_y)
+            x2 = max(self.annotate_start_x, current_x)
+            y2 = max(self.annotate_start_y, current_y)
+            self.annotate_canvas.create_rectangle(
+                x1, y1, x2, y2,
+                outline="yellow", width=2, tags="bbox_temp"
+            )
     
     def annotate_on_release(self, event):
-        """Fin du dessin de la bbox."""
-        if not self.annotate_drawing:
-            return
-        
-        end_x = self.annotate_canvas.canvasx(event.x)
-        end_y = self.annotate_canvas.canvasy(event.y)
-        
-        x1 = min(self.annotate_start_x, end_x)
-        y1 = min(self.annotate_start_y, end_y)
-        x2 = max(self.annotate_start_x, end_x)
-        y2 = max(self.annotate_start_y, end_y)
-        
-        self.annotate_bbox = (int(x1), int(y1), int(x2), int(y2))
-        self.annotate_drawing = False
-        
+        """Fin du dessin ou du déplacement d'une bbox."""
+        if self.annotate_dragging_bbox:
+            # Fin du déplacement
+            self.annotate_dragging_bbox = False
+            self.annotate_draw_all_bboxes()
+            self.annotate_update_bbox_label()
+        elif self.annotate_drawing:
+            # Fin du dessin d'une nouvelle bbox
+            end_x = self.annotate_canvas.canvasx(event.x)
+            end_y = self.annotate_canvas.canvasy(event.y)
+            
+            x1 = min(self.annotate_start_x, end_x)
+            y1 = min(self.annotate_start_y, end_y)
+            x2 = max(self.annotate_start_x, end_x)
+            y2 = max(self.annotate_start_y, end_y)
+            
+            # Vérifier que la bbox a une taille minimale
+            if abs(x2 - x1) > 10 and abs(y2 - y1) > 10:
+                # Ajouter la nouvelle bbox avec le class_id actuel
+                self.annotate_bboxes.append((int(x1), int(y1), int(x2), int(y2), self.annotate_current_class_id))
+                self.annotate_selected_bbox_index = len(self.annotate_bboxes) - 1  # Sélectionner la nouvelle
+                self.annotate_bbox_is_new = True
+            
+            self.annotate_drawing = False
+            self.annotate_canvas.delete("bbox_temp")
+            self.annotate_draw_all_bboxes()
+            self.annotate_update_bbox_label()
+    
+    def annotate_draw_all_bboxes(self):
+        """Dessine toutes les bboxes sur le canvas."""
         self.annotate_canvas.delete("bbox")
-        self.annotate_canvas.create_rectangle(x1, y1, x2, y2, outline="green", width=2, tags="bbox")
         
-        self.annotate_update_bbox_label()
+        for i, (x1, y1, x2, y2, class_id) in enumerate(self.annotate_bboxes):
+            # Rouge si sélectionnée, vert sinon
+            color = "red" if i == self.annotate_selected_bbox_index else "green"
+            width = 3 if i == self.annotate_selected_bbox_index else 2
+            self.annotate_canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=width, tags="bbox")
     
     def annotate_update_bbox_label(self):
-        """Met à jour le label avec les infos de la bbox."""
-        if self.annotate_bbox:
-            x1, y1, x2, y2 = self.annotate_bbox
-            w = x2 - x1
-            h = y2 - y1
-            self.annotate_bbox_label.configure(text=f"Bbox: ({x1}, {y1}) - ({x2}, {y2})\nTaille: {w}x{h}px")
+        """Met à jour le label avec les infos des bboxes."""
+        if not hasattr(self, 'annotate_bbox_label') or not self.annotate_bbox_label:
+            return  # Le widget n'existe pas encore
+        
+        count = len(self.annotate_bboxes)
+        if count > 0:
+            if self.annotate_selected_bbox_index >= 0:
+                x1, y1, x2, y2, class_id = self.annotate_bboxes[self.annotate_selected_bbox_index]
+                w = x2 - x1
+                h = y2 - y1
+                self.annotate_bbox_label.configure(
+                    text=f"📦 {count} bbox(es) | Sélectionnée: ({x1}, {y1}) - ({x2}, {y2})\nTaille: {w}x{h}px | Classe: {class_id}"
+                )
+            else:
+                self.annotate_bbox_label.configure(text=f"📦 {count} bbox(es) | Aucune sélectionnée")
         else:
             self.annotate_bbox_label.configure(text="Aucune bbox dessinée")
     
     def annotate_save(self):
-        """Sauvegarde l'annotation au format YOLO."""
-        if not self.annotate_bbox:
-            messagebox.showwarning("Aucune bbox", "Dessine d'abord une bounding box autour du personnage !")
+        """Sauvegarde toutes les annotations au format YOLO."""
+        if not self.annotate_bboxes:
+            messagebox.showwarning("Aucune bbox", "Dessine d'abord au moins une bounding box !")
             return
         
         import cv2
@@ -1632,41 +2112,64 @@ class DofusBotApp(ctk.CTk):
         display_w = int(w * self.annotate_scale)
         display_h = int(h * self.annotate_scale)
         
-        x1, y1, x2, y2 = self.annotate_bbox
+        base_name = os.path.splitext(os.path.basename(self.annotate_current_image_path))[0]
+        txt_path = os.path.join(self.annotate_annotated_dir, f"{base_name}.txt")
         
-        # Obtenir la position de l'image dans le Canvas
-        if self.annotate_canvas_id:
-            img_bbox = self.annotate_canvas.bbox(self.annotate_canvas_id)
-            if img_bbox:
-                img_x1, img_y1, img_x2, img_y2 = img_bbox
-                img_center_x = (img_x1 + img_x2) / 2
-                img_center_y = (img_y1 + img_y2) / 2
-                
-                x1_img = (x1 - img_center_x) + display_w / 2
-                y1_img = (y1 - img_center_y) + display_h / 2
-                x2_img = (x2 - img_center_x) + display_w / 2
-                y2_img = (y2 - img_center_y) + display_h / 2
-                
-                x1_orig = x1_img / self.annotate_scale
-                y1_orig = y1_img / self.annotate_scale
-                x2_orig = x2_img / self.annotate_scale
-                y2_orig = y2_img / self.annotate_scale
+        # Lire les annotations existantes pour préserver celles des autres classes
+        existing_annotations = {}
+        if os.path.exists(txt_path):
+            with open(txt_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) == 5:
+                        class_id = int(float(parts[0]))
+                        # Garder seulement les annotations des autres classes
+                        if class_id != self.annotate_current_class_id:
+                            existing_annotations[class_id] = existing_annotations.get(class_id, []) + [line]
+        
+        # Convertir toutes les bboxes au format YOLO
+        yolo_lines = []
+        
+        for x1, y1, x2, y2, class_id in self.annotate_bboxes:
+            # Obtenir la position de l'image dans le Canvas
+            if self.annotate_canvas_id:
+                img_bbox = self.annotate_canvas.bbox(self.annotate_canvas_id)
+                if img_bbox:
+                    img_x1, img_y1, img_x2, img_y2 = img_bbox
+                    img_center_x = (img_x1 + img_x2) / 2
+                    img_center_y = (img_y1 + img_y2) / 2
+                    
+                    x1_img = (x1 - img_center_x) + display_w / 2
+                    y1_img = (y1 - img_center_y) + display_h / 2
+                    x2_img = (x2 - img_center_x) + display_w / 2
+                    y2_img = (y2 - img_center_y) + display_h / 2
+                    
+                    x1_orig = x1_img / self.annotate_scale
+                    y1_orig = y1_img / self.annotate_scale
+                    x2_orig = x2_img / self.annotate_scale
+                    y2_orig = y2_img / self.annotate_scale
+                else:
+                    x1_orig = x1 / self.annotate_scale
+                    y1_orig = y1 / self.annotate_scale
+                    x2_orig = x2 / self.annotate_scale
+                    y2_orig = y2 / self.annotate_scale
             else:
                 x1_orig = x1 / self.annotate_scale
                 y1_orig = y1 / self.annotate_scale
                 x2_orig = x2 / self.annotate_scale
                 y2_orig = y2 / self.annotate_scale
-        else:
-            x1_orig = x1 / self.annotate_scale
-            y1_orig = y1 / self.annotate_scale
-            x2_orig = x2 / self.annotate_scale
-            y2_orig = y2 / self.annotate_scale
-        
-        # Calculer le centre et la taille (normalisés 0-1)
-        width_norm = (x2_orig - x1_orig) / w
-        height_norm = (y2_orig - y1_orig) / h
-        x_center_norm = ((x1_orig + x2_orig) / 2) / w
-        y_center_norm = ((y1_orig + y2_orig) / 2) / h
+            
+            # Calculer le centre et la taille (normalisés 0-1)
+            width_norm = (x2_orig - x1_orig) / w
+            height_norm = (y2_orig - y1_orig) / h
+            x_center_norm = ((x1_orig + x2_orig) / 2) / w
+            y_center_norm = ((y1_orig + y2_orig) / 2) / h
+            
+            # Ajouter la ligne YOLO pour cette bbox
+            yolo_lines.append(f"{class_id} {x_center_norm:.6f} {y_center_norm:.6f} {width_norm:.6f} {height_norm:.6f}")
         
         # Nom de base de l'image
         base_name = os.path.splitext(os.path.basename(self.annotate_current_image_path))[0]
@@ -1678,20 +2181,27 @@ class DofusBotApp(ctk.CTk):
             import shutil
             shutil.copy2(self.annotate_current_image_path, dest_img_path)
         
-        # Sauvegarder l'annotation dans player_dataset/images/Personnage/
-        # C'est ici que prepare_player_dataset.py va chercher les annotations
-        txt_path = os.path.join(self.annotate_annotated_dir, f"{base_name}.txt")
+        # Écrire toutes les annotations : d'abord celles des autres classes, puis celles de la classe actuelle
+        all_lines = []
+        for class_id_lines in existing_annotations.values():
+            all_lines.extend(class_id_lines)
+        all_lines.extend(yolo_lines)
+        
         with open(txt_path, 'w') as f:
-            f.write(f"0 {x_center_norm:.6f} {y_center_norm:.6f} {width_norm:.6f} {height_norm:.6f}\n")
+            for line in all_lines:
+                f.write(line + '\n')
         
         # Message de confirmation avec le chemin
         annotation_dir = os.path.relpath(self.annotate_annotated_dir)
         self.annotate_status_label.configure(
-            text=f"✅ Annotation sauvegardée dans\n{annotation_dir}/"
+            text=f"✅ {len(yolo_lines)} annotation(s) sauvegardée(s) dans\n{annotation_dir}/"
         )
         self.after(3000, self.annotate_update_status)
         
-        # Recharger pour afficher la bbox sauvegardée
+        # Marquer les bboxes comme sauvegardées
+        self.annotate_bbox_is_new = False
+        
+        # Recharger pour afficher les bboxes sauvegardées
         self.annotate_load_existing_annotation()
     
     def annotate_skip(self):
@@ -1699,39 +2209,47 @@ class DofusBotApp(ctk.CTk):
         self.annotate_next_image()
     
     def annotate_delete(self):
-        """Supprime l'annotation existante."""
-        base_name = os.path.splitext(os.path.basename(self.annotate_current_image_path))[0]
-        txt_path = os.path.join(self.annotate_annotated_dir, f"{base_name}.txt")
+        """Supprime la bbox sélectionnée."""
+        if self.annotate_selected_bbox_index < 0:
+            messagebox.showwarning("Aucune sélection", "Sélectionne d'abord une bbox à supprimer !\n(Clique dessus)")
+            return
         
-        if os.path.exists(txt_path):
-            os.remove(txt_path)
-            img_ext = os.path.splitext(self.annotate_current_image_path)[1]
-            dest_img_path = os.path.join(self.annotate_annotated_dir, f"{base_name}{img_ext}")
-            if os.path.exists(dest_img_path):
-                os.remove(dest_img_path)
-            messagebox.showinfo("Succès", "Annotation supprimée")
-            self.annotate_bbox = None
-            self.annotate_canvas.delete("bbox")
-            self.annotate_load_current_image()
-        else:
-            messagebox.showinfo("Info", "Aucune annotation à supprimer")
+        # Supprimer la bbox sélectionnée
+        self.annotate_bboxes.pop(self.annotate_selected_bbox_index)
+        self.annotate_selected_bbox_index = -1
+        self.annotate_bbox_is_new = True
+        self.annotate_draw_all_bboxes()
+        self.annotate_update_bbox_label()
     
     def annotate_prev_image(self):
         """Image précédente."""
         if self.annotate_current_index > 0:
             self.annotate_current_index -= 1
+            # Réinitialiser le flag avant de charger la nouvelle image
+            self.annotate_bboxes = []
+            self.annotate_selected_bbox_index = -1
+            self.annotate_drawing = False
+            self.annotate_dragging_bbox = False
+            self.annotate_bbox_is_new = False
             self.annotate_load_current_image()
     
     def annotate_next_image(self):
         """Image suivante."""
-        if self.annotate_bbox:
+        # Vérifier seulement si c'est une NOUVELLE bbox non sauvegardée
+        if self.annotate_bboxes and self.annotate_bbox_is_new:
             if not messagebox.askyesno("Bbox non sauvegardée", 
-                "Tu as dessiné une bbox mais ne l'as pas validée.\n\n"
+                "Tu as dessiné des bboxes mais ne les as pas validées.\n\n"
                 "Veux-tu vraiment passer à l'image suivante sans sauvegarder ?"):
                 return
         
         if self.annotate_current_index < len(self.annotate_image_files) - 1:
             self.annotate_current_index += 1
+            # Réinitialiser le flag avant de charger la nouvelle image
+            self.annotate_bboxes = []
+            self.annotate_selected_bbox_index = -1
+            self.annotate_drawing = False
+            self.annotate_dragging_bbox = False
+            self.annotate_bbox_is_new = False
             self.annotate_load_current_image()
         else:
             annotated = sum(1 for img_file in self.annotate_image_files 
@@ -1746,13 +2264,22 @@ class DofusBotApp(ctk.CTk):
         total = len(self.annotate_image_files)
         current = self.annotate_current_index + 1
         
+        # Compter les annotations de la classe actuelle
         annotated = 0
         if os.path.exists(self.annotate_annotated_dir):
-            annotated_files = [f for f in os.listdir(self.annotate_annotated_dir) if f.endswith('.txt')]
-            annotated = len(annotated_files)
+            class_id_str = str(self.annotate_current_class_id)
+            for txt_file in os.listdir(self.annotate_annotated_dir):
+                if txt_file.endswith('.txt'):
+                    txt_path = os.path.join(self.annotate_annotated_dir, txt_file)
+                    with open(txt_path, 'r') as f:
+                        for line in f:
+                            if line.strip().startswith(class_id_str + " "):
+                                annotated += 1
+                                break
         
+        template_name = self.current_template.get()
         self.annotate_status_label.configure(
-            text=f"Image {current}/{total}\n{annotated} annotée(s) dans Personnage/"
+            text=f"Image {current}/{total}\n{annotated} {template_name} annoté(s)"
         )
 
     # ----------------------------------------------------------------
